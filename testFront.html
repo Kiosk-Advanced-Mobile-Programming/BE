@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Flask + Firebase 테스트</title>
+    <script type="module">
+      // ✅ Firebase SDK 로드
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+      import {
+        getAuth,
+        signInWithEmailAndPassword,
+      } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+
+      // ✅ Firebase 설정
+      const firebaseConfig = {
+        apiKey: "AIzaSyBmEzUXAqRULYxbUmy2K0HmHB4p3akcjjs",
+        authDomain: "kiosk-be985.firebaseapp.com",
+        projectId: "kiosk-be985",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+
+      async function login() {
+        const email = document.getElementById("email").value;
+        const password = document.getElementById("password").value;
+
+        try {
+          const userCred = await signInWithEmailAndPassword(
+            auth,
+            email,
+            password
+          );
+          const token = await userCred.user.getIdToken();
+          document.getElementById("token").textContent = token;
+          alert("로그인 성공!");
+          window.idToken = token;
+        } catch (err) {
+          console.error(err);
+          alert("로그인 실패: " + err.message);
+        }
+      }
+
+      async function callApi(endpoint) {
+        if (!window.idToken) {
+          alert("먼저 로그인하세요!");
+          return;
+        }
+
+        const res = await fetch(endpoint, {
+          headers: { Authorization: "Bearer " + window.idToken },
+        });
+        const data = await res.json();
+        document.getElementById("result").textContent = JSON.stringify(
+          data,
+          null,
+          2
+        );
+      }
+
+      window.login = login;
+      window.callApi = callApi;
+
+      // ===== 테스트용 간단 API 래퍼 =====
+      const BASE = "http://127.0.0.1:5000";
+
+      async function authedFetch(path, options = {}) {
+        if (!window.idToken) throw new Error("먼저 로그인하세요.");
+        const headers = Object.assign({}, options.headers, {
+          Authorization: "Bearer " + window.idToken,
+          "Content-Type": "application/json",
+        });
+        const res = await fetch(BASE + path, { ...options, headers });
+        const data = await res.json();
+        document.getElementById("result").textContent = JSON.stringify(
+          data,
+          null,
+          2
+        );
+        return data;
+      }
+
+      // ===== 1) 내 정보 =====
+      window.getMe = () => authedFetch("/v1/users/me");
+
+      // ===== 2) 세션 시작/종료 =====
+      window.startSession = async () => {
+        const body = { category: "CAFE" }; // 필요하면 선택값으로 바꿔도 됨
+        const data = await authedFetch("/v1/sessions/start", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        window.SID = data.sessionId; // 전역 저장
+        alert("세션 시작: " + window.SID);
+      };
+
+      window.finishSession = async () => {
+        if (!window.SID) return alert("세션이 없습니다. 먼저 시작하세요.");
+        await authedFetch("/v1/sessions/finish", {
+          method: "POST",
+          body: JSON.stringify({ sessionId: window.SID }),
+        });
+        alert("세션 종료 완료");
+      };
+
+      // ===== 3) 이벤트 기록(단일/배치) =====
+      window.trackEvent = async () => {
+        if (!window.SID) return alert("세션이 없습니다. 먼저 시작하세요.");
+        const now = Math.floor(Date.now() / 1000);
+        await authedFetch("/v1/events/track", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: window.SID,
+            event: {
+              type: "MENU_ADD",
+              ts: now,
+              meta: { duration: 1.2, success: true },
+            },
+          }),
+        });
+        alert("단일 이벤트 기록됨");
+      };
+
+      window.batchEvents = async () => {
+        if (!window.SID) return alert("세션이 없습니다. 먼저 시작하세요.");
+        const now = Math.floor(Date.now() / 1000);
+        await authedFetch("/v1/events/batch", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: window.SID,
+            events: [
+              { type: "NAV_CLICK", ts: now, meta: { duration: 0.5 } },
+              {
+                type: "PAYMENT",
+                ts: now + 2,
+                meta: {
+                  method: "CARD",
+                  duration: 4.6,
+                  success: false,
+                  error: "PIN_TIMEOUT",
+                },
+              },
+            ],
+          }),
+        });
+        alert("배치 이벤트 기록됨");
+      };
+
+      // ===== 4) 통계 조회(전체/세션별) =====
+      window.getSummary = () => authedFetch("/v1/stats/summary?windowDays=7");
+      window.getSessionStats = () => {
+        if (!window.SID) return alert("세션이 없습니다. 먼저 시작하세요.");
+        return authedFetch(`/v1/stats/session/${window.SID}`);
+      };
+    </script>
+  </head>
+  <body style="font-family: sans-serif; max-width: 500px; margin: 40px auto">
+    <h1>🔥 Flask + Firebase 테스트 페이지</h1>
+
+    <h3>1. 로그인</h3>
+    <input
+      id="email"
+      type="email"
+      placeholder="이메일"
+      value="test@example.com"
+    /><br />
+    <input
+      id="password"
+      type="password"
+      placeholder="비밀번호"
+      value="test1234"
+    /><br />
+    <button onclick="login()">로그인</button>
+
+    <p>토큰:</p>
+    <pre
+      id="token"
+      style="white-space: pre-wrap; background: #f4f4f4; padding: 8px"
+    ></pre>
+
+    <h3>2. API 호출</h3>
+    <button onclick="callApi('http://127.0.0.1:5000/health')">헬스체크</button>
+    <button onclick="callApi('http://127.0.0.1:5000/v1/users/me')">
+      내 정보
+    </button>
+    <button
+      onclick="callApi('http://127.0.0.1:5000/v1/stats/summary?windowDays=7')"
+    >
+      통계 조회
+    </button>
+
+    <h3>결과</h3>
+    <pre
+      id="result"
+      style="white-space: pre-wrap; background: #e8f0ff; padding: 8px"
+    ></pre>
+
+    <h3>3. 세션</h3>
+    <button onclick="startSession()">세션 시작</button>
+    <button onclick="finishSession()">세션 종료</button>
+
+    <h3>4. 이벤트</h3>
+    <button onclick="trackEvent()">이벤트(단일) 기록</button>
+    <button onclick="batchEvents()">이벤트(배치) 기록</button>
+
+    <h3>5. 통계</h3>
+    <button onclick="getSummary()">요약 통계(최근 7일)</button>
+    <button onclick="getSessionStats()">해당 세션 통계</button>
+
+    <p style="margin-top: 8px; color: #666">
+      현재 세션ID: <b id="sidView"></b>
+    </p>
+    <script>
+      // 세션ID가 생길 때 화면에 표시(선택사항)
+      const _sid = Object.getOwnPropertyDescriptor(window, "SID");
+      Object.defineProperty(window, "SID", {
+        get() {
+          return _sid?.get ? _sid.get() : this._SID;
+        },
+        set(v) {
+          this._SID = v;
+          const el = document.getElementById("sidView");
+          if (el) el.textContent = v || "";
+        },
+      });
+    </script>
+  </body>
+</html>
