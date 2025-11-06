@@ -1,2 +1,4 @@
 # 가상환경 파일
 venv/
+
+firebase-admin-key.json
